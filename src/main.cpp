@@ -51,6 +51,7 @@ double distance(double x1, double y1, double x2, double y2)
 {
 	return sqrt((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1));
 }
+
 int ClosestWaypoint(double x, double y, vector<double> maps_x,
 		vector<double> maps_y)
 {
@@ -219,8 +220,8 @@ int main()
 		map_waypoints_dy.push_back(d_y);
 	}
 
-    // TODO DEBUG
-    cout << "map_waypoints_x.length() = " << map_waypoints_x.size() << endl;
+	// TODO DEBUG
+	cout << "map_waypoints_x.length() = " << map_waypoints_x.size() << endl;
 
 	h.onMessage(
 			[&map_waypoints_x,&map_waypoints_y,&map_waypoints_s,&map_waypoints_dx,&map_waypoints_dy](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
@@ -271,25 +272,32 @@ int main()
 
 							// TODO: define a path made up of (x,y) points that the car will visit sequentially every .02 seconds
 
-                            /* My code */
+							/* My code */
 
-                            double dist_inc = 0.5;
+							double dist_inc = 0.5;
+							double next_s, next_d;
+							vector<double> xy;
 
-                            for(int i = 0; i < 50; i++)
-                            {
-                                  next_x_vals.push_back(car_x+(dist_inc*i)*cos(deg2rad(car_yaw)));
-                                  next_y_vals.push_back(car_y+(dist_inc*i)*sin(deg2rad(car_yaw)));
-                            }
+							for(int i = 0; i < 50; i++)
+							{
+								next_s = car_s + (i+1)*dist_inc;
+								next_d = 6;
 
-                            /* Finish My code */
+								xy = getXY(next_s, next_d, map_waypoints_s, map_waypoints_x, map_waypoints_y);
 
-                            // TODO DEBUG
-                            for(int i = 0; i < 50; i++)
-                            {
-                                printf("(%lf, %lf)", next_x_vals[i], next_y_vals[i]);
-                            }
+								next_x_vals.push_back(xy[0]);
+								next_y_vals.push_back(xy[1]);
+							}
+				
+							// TODO DEBUG
+							/*for(int i = 0; i < 50; i++)
+							{
+								printf("(%lf, %lf)", next_x_vals[i], next_y_vals[i]);
+							}*/
 
-                            msgJson["next_x"] = next_x_vals;
+							/* Finish My code */
+
+							msgJson["next_x"] = next_x_vals;
 							msgJson["next_y"] = next_y_vals;
 
 							auto msg = "42[\"control\","+ msgJson.dump()+"]";
