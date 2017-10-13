@@ -8,7 +8,6 @@
 #include "Eigen-3.3/Eigen/Core"
 #include "Eigen-3.3/Eigen/QR"
 #include "json.hpp"
-#include "spline.h"
 #include "path_planner.h"
 
 using namespace std;
@@ -76,9 +75,6 @@ int main()
 		map_waypoints_dy.push_back(d_y);
 	}
 
-	// TODO DEBUG
-	cout << "map_waypoints_x.length() = " << map_waypoints_x.size() << endl;
-
 	h.onMessage(
 			//[&map_waypoints_x,&map_waypoints_y,&map_waypoints_s,&map_waypoints_dx,&map_waypoints_dy](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length, \
 			uWS::OpCode opCode)
@@ -127,11 +123,14 @@ int main()
 							vector<double> next_x_vals;
 							vector<double> next_y_vals;
 
-							// TODO: define a path made up of (x,y) points that the car will visit sequentially every .02 seconds
+							//define a path made up of (x,y) points that the car will visit sequentially every .02 seconds
 
 							/* My code */
-							path_planner(next_x_vals, next_y_vals, car_s, \
-								map_waypoints_s, map_waypoints_x, map_waypoints_y);
+							auto next_vals = path_planner(previous_path_x, previous_path_y, \
+								car_x, car_y, car_yaw, car_s, map_waypoints_s, map_waypoints_x, map_waypoints_y);
+
+							next_x_vals = next_vals[0];
+							next_y_vals = next_vals[1];
 
 							/* Finish My code */
 
