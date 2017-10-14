@@ -181,6 +181,16 @@ struct Collision_avoidance
 								// emergency_too_close if we are below emergency_min_frontal_gap threshold
 };
 
+struct Velocity_manager
+{
+	double target_vel; // Reference velocity to target in mph
+	// The following var is removed from here due to issues related with the static qualifier
+	//static double curr_vel; // This is to avoid the cold start problem (to avoid surpass max jerk)
+	double step_up_vel; // Slowly increase velocity byt step_up_vel
+	double step_down_vel; // Slowly decrease velocity byt step_down_vel
+	double emergency_step_down_vel; // Quickly decrease velocity by emergency_step_down_vel
+};
+
 
 vector< vector<double> > path_planner(const vector<double> &previous_path_x, const vector<double> &previous_path_y, \
 					double car_x, double car_y, double car_yaw, \
@@ -188,17 +198,15 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 					vector<double> &map_waypoints_x, vector<double> &map_waypoints_y, \
 					const vector< vector<double> > &sensor_fusion)
 {
-	double target_vel = 49.5; // Reference velocity to target in mph
 	static double curr_vel = 0.0; // This is to avoid the cold start problem (to avoid surpass max jerk)
-	double step_up_vel = 1.0; // Slowly increase velocity byt step_up_vel
-	double step_down_vel = 0.5; // Slowly decrease velocity byt step_down_vel
-	double emergency_step_down_vel = 10.0; // Quickly decrease velocity by emergency_step_down_vel
-	// TODO move this to an structure
+	Velocity_manager v_man = {.target_vel = 49.5, .step_up_vel = 1.0, \
+		.step_down_vel = 0.5, .emergency_step_down_vel = 10.0};
 
 	double desired_lane = 1, lane_width = 4;
 	double next_d = desired_lane*lane_width + lane_width/2;
 	unsigned int size_previous_path = previous_path_x.size();
 	vector<double> ptsx, ptsy; // List of widely spaced waypoints evenly spaced at 30 m
+
 	Collision_avoidance col_avoidance = {.min_frontal_gap = 40,	.emergency_min_frontal_gap = 25, \
 		.closeness = not_close};
 
@@ -230,7 +238,7 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 				// Is it an emergency?
 				if(frontal_gap < col_avoidance.emergency_min_frontal_gap)
 				{
-					curr_vel = fmax(1, curr_vel - emergency_step_down_vel);
+					curr_vel = fmax(1, curr_vel - v_man.emergency_step_down_vel);
 					col_avoidance.closeness = emergency_too_close;
 
 					// TODO DEBUG
@@ -239,7 +247,7 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 				// Not emergency but too close
 				else
 				{
-					curr_vel = fmax(1, curr_vel - step_down_vel);
+					curr_vel = fmax(1, curr_vel - v_man.step_down_vel);
 					col_avoidance.closeness = too_close;
 
 					// TODO DEBUG
@@ -253,7 +261,7 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 	// We are safe
 	if (col_avoidance.closeness == not_close)
 	{
-		curr_vel = fmin(curr_vel + step_up_vel, target_vel);
+		curr_vel = fmin(curr_vel + v_man.step_up_vel, v_man.target_vel);
 
 		// TODO DEBUG
 		cout << "We are safe." << " curr_vel: " << curr_vel << endl;
