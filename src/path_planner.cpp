@@ -170,18 +170,98 @@ inline double mps2mph(double mps)
 	return mps / 0.44704;
 }
 
+enum closeness_level {not_close, too_close, emergency_too_close};
 
-vector< vector<double> >  path_planner(const vector<double> &previous_path_x, const vector<double> &previous_path_y, \
+struct Collision_avoidance
+{
+	double min_frontal_gap; // Minimum frontal space in meters to keep before reducing speed
+	double emergency_min_frontal_gap; // Minimum frontal space in meters to make an emergency brake
+	closeness_level closeness; // not_close if we are above min_frontal_gap
+								// too_close if we are below min_frontal_gap threshold
+								// emergency_too_close if we are below emergency_min_frontal_gap threshold
+};
+
+
+vector< vector<double> > path_planner(const vector<double> &previous_path_x, const vector<double> &previous_path_y, \
 					double car_x, double car_y, double car_yaw, \
 					double car_s, vector<double> &map_waypoints_s, \
-					vector<double> &map_waypoints_x, vector<double> &map_waypoints_y)
+					vector<double> &map_waypoints_x, vector<double> &map_waypoints_y, \
+					const vector< vector<double> > &sensor_fusion)
 {
-	double ref_vel = 49.5; //reference velocity to target in mph
-	double desired_lane = 1, lane_width = 4;
-	unsigned int size_previous_path = previous_path_x.size();
+	double target_vel = 49.5; // Reference velocity to target in mph
+	static double curr_vel = 0.0; // This is to avoid the cold start problem (to avoid surpass max jerk)
+	double step_up_vel = 1.0; // Slowly increase velocity byt step_up_vel
+	double step_down_vel = 10.0; // Slowly decrease velocity byt step_down_vel
+	double emergency_step_down_vel = 15.0; // Quickly decrease velocity by emergency_step_down_vel
+	// TODO move this to an structure
 
-	// List of widely spaced waypoints evenly spaced at 30 m
-	vector<double> ptsx, ptsy;
+	double desired_lane = 1, lane_width = 4;
+	double next_d = desired_lane*lane_width + lane_width/2;
+	unsigned int size_previous_path = previous_path_x.size();
+	vector<double> ptsx, ptsy; // List of widely spaced waypoints evenly spaced at 30 m
+	Collision_avoidance col_avoidance = {.min_frontal_gap = 30,	.emergency_min_frontal_gap = 15, \
+		.closeness = not_close};
+
+	double vx, vy, check_speed, check_car_s;
+	double other_car_d;
+	double frontal_gap;
+
+	for(int i=0; i<sensor_fusion.size(); i++)
+	{
+		other_car_d = sensor_fusion[i][6];
+
+		// Is there another car in my lane?
+		if(other_car_d < next_d + lane_width/2 \
+			&& other_car_d > next_d - lane_width/2)
+		{
+			vx = sensor_fusion[i][3];
+			vy = sensor_fusion[i][4];
+			check_speed = sqrt(vx*vx + vy*vy);
+			check_car_s = sensor_fusion[i][5];
+
+			check_car_s += (double)size_previous_path*0.02*check_speed;
+
+			// Is it the car in front of me and too close?
+			frontal_gap = check_car_s - car_s;
+
+			if( (check_car_s > car_s) \
+				&& frontal_gap < col_avoidance.min_frontal_gap)
+			{
+				// Is it an emergency?
+				if(frontal_gap < col_avoidance.emergency_min_frontal_gap)
+				{
+					curr_vel = fmax(0, curr_vel - emergency_step_down_vel);
+					col_avoidance.closeness = emergency_too_close;
+
+					// TODO DEBUG
+					cout << "Emergency. Frontal gap: " << frontal_gap << endl;
+					cout << "curr_vel: " << curr_vel << endl;
+				}
+				// Not emergency but too close
+				else
+				{
+					curr_vel = fmax(0, curr_vel - step_down_vel);
+					col_avoidance.closeness = too_close;
+
+					// TODO DEBUG
+					cout << "Too close. Frontal gap: " << frontal_gap << endl;
+					cout << "curr_vel: " << curr_vel << endl;
+				}
+
+			}
+		}
+	}
+
+	// We are safe
+	if (col_avoidance.closeness == not_close)
+	{
+		curr_vel = fmin(curr_vel + step_up_vel, target_vel);
+
+		// TODO DEBUG
+		cout << "We are safe" << endl;
+		cout << "curr_vel: " << curr_vel << endl;
+	}
+
 
 
 	/* Computing a reference state */
@@ -229,7 +309,6 @@ vector< vector<double> >  path_planner(const vector<double> &previous_path_x, co
 	/***************************************/
 
 	// Adding 30 m evenly spaced points
-	double next_d = desired_lane*lane_width + lane_width/2;
 
 	vector<double> next_wp0 = getXY(car_s + 30, next_d, map_waypoints_s, map_waypoints_x, map_waypoints_y);
 	vector<double> next_wp1 = getXY(car_s + 60, next_d, map_waypoints_s, map_waypoints_x, map_waypoints_y);
@@ -262,12 +341,14 @@ vector< vector<double> >  path_planner(const vector<double> &previous_path_x, co
 	tk::spline s;
 
 	// TODO DEBUG
+	/*
 	auto print = [](const double& n) {cout << n << ", ";};
 	cout << "ptsx: ";
 	for_each(ptsx.begin(), ptsx.end(), print);
 	cout << endl << "ptsy: ";
 	for_each(ptsy.begin(), ptsy.end(), print);
 	cout << endl;
+	*/
 
 
 
@@ -295,7 +376,7 @@ vector< vector<double> >  path_planner(const vector<double> &previous_path_x, co
 
 	for(int i=1; i <= 50 - size_previous_path; i++)
 	{
-		N = (target_dist / ( 0.02*mph2mps(ref_vel) )); // Each point is visited every 0.02 seconds
+		N = (target_dist / ( 0.02*mph2mps(curr_vel) )); // Each point is visited every 0.02 seconds
 		x_point = x_add_on + target_x/N;
 		y_point = s(x_point);
 

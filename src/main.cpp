@@ -127,7 +127,8 @@ int main()
 
 							/* My code */
 							auto next_vals = path_planner(previous_path_x, previous_path_y, \
-								car_x, car_y, car_yaw, car_s, map_waypoints_s, map_waypoints_x, map_waypoints_y);
+								car_x, car_y, car_yaw, car_s, map_waypoints_s, map_waypoints_x, map_waypoints_y, \
+								sensor_fusion);
 
 							next_x_vals = next_vals[0];
 							next_y_vals = next_vals[1];
