@@ -191,15 +191,15 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 	double target_vel = 49.5; // Reference velocity to target in mph
 	static double curr_vel = 0.0; // This is to avoid the cold start problem (to avoid surpass max jerk)
 	double step_up_vel = 1.0; // Slowly increase velocity byt step_up_vel
-	double step_down_vel = 10.0; // Slowly decrease velocity byt step_down_vel
-	double emergency_step_down_vel = 15.0; // Quickly decrease velocity by emergency_step_down_vel
+	double step_down_vel = 0.5; // Slowly decrease velocity byt step_down_vel
+	double emergency_step_down_vel = 10.0; // Quickly decrease velocity by emergency_step_down_vel
 	// TODO move this to an structure
 
 	double desired_lane = 1, lane_width = 4;
 	double next_d = desired_lane*lane_width + lane_width/2;
 	unsigned int size_previous_path = previous_path_x.size();
 	vector<double> ptsx, ptsy; // List of widely spaced waypoints evenly spaced at 30 m
-	Collision_avoidance col_avoidance = {.min_frontal_gap = 30,	.emergency_min_frontal_gap = 15, \
+	Collision_avoidance col_avoidance = {.min_frontal_gap = 40,	.emergency_min_frontal_gap = 25, \
 		.closeness = not_close};
 
 	double vx, vy, check_speed, check_car_s;
@@ -219,7 +219,7 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 			check_speed = sqrt(vx*vx + vy*vy);
 			check_car_s = sensor_fusion[i][5];
 
-			check_car_s += (double)size_previous_path*0.02*check_speed;
+			check_car_s += (double)size_previous_path*0.02*check_speed; // Because we are reusing previous points
 
 			// Is it the car in front of me and too close?
 			frontal_gap = check_car_s - car_s;
@@ -230,22 +230,20 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 				// Is it an emergency?
 				if(frontal_gap < col_avoidance.emergency_min_frontal_gap)
 				{
-					curr_vel = fmax(0, curr_vel - emergency_step_down_vel);
+					curr_vel = fmax(1, curr_vel - emergency_step_down_vel);
 					col_avoidance.closeness = emergency_too_close;
 
 					// TODO DEBUG
-					cout << "Emergency. Frontal gap: " << frontal_gap << endl;
-					cout << "curr_vel: " << curr_vel << endl;
+					cout << "Emergency. Frontal gap: " << frontal_gap << " curr_vel: " << curr_vel << endl;
 				}
 				// Not emergency but too close
 				else
 				{
-					curr_vel = fmax(0, curr_vel - step_down_vel);
+					curr_vel = fmax(1, curr_vel - step_down_vel);
 					col_avoidance.closeness = too_close;
 
 					// TODO DEBUG
-					cout << "Too close. Frontal gap: " << frontal_gap << endl;
-					cout << "curr_vel: " << curr_vel << endl;
+					cout << "Too close. Frontal gap: " << frontal_gap << " curr_vel: " << curr_vel << endl;
 				}
 
 			}
@@ -258,8 +256,7 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 		curr_vel = fmin(curr_vel + step_up_vel, target_vel);
 
 		// TODO DEBUG
-		cout << "We are safe" << endl;
-		cout << "curr_vel: " << curr_vel << endl;
+		cout << "We are safe." << " curr_vel: " << curr_vel << endl;
 	}
 
 
