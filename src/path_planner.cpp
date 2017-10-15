@@ -2,6 +2,12 @@
 #include <vector>
 #include <cmath>
 #include "spline.h"
+#include <map>
+#include <string>
+#include <iterator>
+#include <limits>
+#include <algorithm>
+
 
 using namespace std;
 
@@ -157,8 +163,6 @@ vector<double> getXY(double s, double d, vector<double> maps_s,
 /*** /Previously in main.cpp ***/
 
 
-
-
 //1 mph is equal to 0.44704 meter/second.
 inline double mph2mps(double mph)
 {
@@ -176,6 +180,7 @@ struct Collision_avoidance
 {
 	double min_frontal_gap; // Minimum frontal space in meters to keep before reducing speed
 	double emergency_min_frontal_gap; // Minimum frontal space in meters to make an emergency brake
+	double safe_gap; // Distance in meter that delimite a safe area around the car to consider a lane change is secure
 	closeness_level closeness; // not_close if we are above min_frontal_gap
 								// too_close if we are below min_frontal_gap threshold
 								// emergency_too_close if we are below emergency_min_frontal_gap threshold
@@ -191,6 +196,103 @@ struct Velocity_manager
 	double emergency_step_down_vel; // Quickly decrease velocity by emergency_step_down_vel
 };
 
+enum finite_state_machine 
+{
+	KL, 	// Keep Lane
+	PLCL, 	// Prepare Lane Change Left
+	PLCR, 	// Prepare Lane Change Right
+	LCL, 	// Lane Change Left
+	LCR		// Lane Chane Right
+};
+
+enum e_level
+{
+	TOTALLY_EMPTY, 	// There is no car in a safe area around my car
+	ALMOST_EMPTY, 	// Cannot incorporate right now, need to locate behind the following car)
+	NOT_EMPTY 		// There is no drivable empty space in this lane
+};
+
+
+/**
+	Given a car in the same lane, it computes the gap between us and the car.
+	The gap could be frontal (positive) or rear (negative).
+*/
+double compute_gap(const vector<double> &car, int size_previous_path, double car_s)
+{
+	double vx = car[3];
+	double vy = car[4];
+	double check_speed = sqrt(vx*vx + vy*vy);
+	double check_car_s = car[5];
+
+	check_car_s += (double)size_previous_path*0.02*check_speed; // Because we are reusing previous points
+
+	// Is it the car too close?
+	double frontal_gap = check_car_s - car_s;
+
+	return frontal_gap;
+}
+
+
+/**
+    Returns the emptiness level of a lane
+		@return see enum e_level
+
+*/
+e_level emptiness_level(int target_lane, int lane_width, int lanes_available, const vector<double> &other_car, \
+	int size_previous_path, double car_s, double safe_gap)
+{
+	double inf = numeric_limits<double>::max();
+
+	// Check if lane has sense
+	if(target_lane < 0 || target_lane > lanes_available)
+		return NOT_EMPTY;
+
+	// Check if there is a car in this lane
+
+	double other_car_d = other_car[6];
+	double lane_center = target_lane*lane_width + lane_width/2;
+
+	// There is a car
+	if(other_car_d < lane_center + lane_width/2 \
+			&& other_car_d > lane_center - lane_width/2)
+	{
+		// Check car_s in respect to my s
+		double gap = compute_gap(other_car, size_previous_path, car_s);
+
+		if(fabs(gap) > safe_gap)
+			return TOTALLY_EMPTY;
+		else
+			return ALMOST_EMPTY;
+
+	}
+	// There is no car
+	else 
+		return TOTALLY_EMPTY;
+}
+
+
+/**
+	Returns the cost of changing the lane. It just take into account if the lane exist and if it's our destiny's lane.
+
+*/
+/*
+void cost_lane_changing(int future_lane, finite_state_machine future_state, map<finite_state_machine, vector<double> > &costs)
+{
+	double cost, delta_d, delta_s;
+	double inf = numeric_limits<double>::max();
+
+	delta_d = future_lane - goal_lane;
+	delta_s = goal_s - this->s;
+
+	if(future_lane < 0 || future_lane > lanes_available)
+		cost = inf;
+	else
+		//cost = 1 - exp(-(fabs(delta_d)/delta_s)); TODO FUTURE
+		cost = 1;
+
+	costs[future_state].push_back(cost);
+}
+*/
 
 vector< vector<double> > path_planner(const vector<double> &previous_path_x, const vector<double> &previous_path_y, \
 					double car_x, double car_y, double car_yaw, \
@@ -202,38 +304,127 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 	Velocity_manager v_man = {.target_vel = 49.5, .step_up_vel = 1.0, \
 		.step_down_vel = 0.5, .emergency_step_down_vel = 10.0};
 
-	double desired_lane = 1, lane_width = 4;
+	int lanes_available = 3; // TODO check
+	static double desired_lane = 1;
+	double lane_width = 4;
 	double next_d = desired_lane*lane_width + lane_width/2;
 	unsigned int size_previous_path = previous_path_x.size();
 	vector<double> ptsx, ptsy; // List of widely spaced waypoints evenly spaced at 30 m
 
 	Collision_avoidance col_avoidance = {.min_frontal_gap = 40,	.emergency_min_frontal_gap = 25, \
-		.closeness = not_close};
+		.safe_gap = col_avoidance.min_frontal_gap + 10, .closeness = not_close};
 
 	double vx, vy, check_speed, check_car_s;
 	double other_car_d;
 	double frontal_gap;
 
+	static finite_state_machine curr_state = KL;
+
+	vector< pair<e_level, int> > l_elevel_ls, curr_elevel_ls, r_elevel_ls; // To measure emptiness levels in adjacent lanes
+	pair<e_level, int> l_elevel, curr_elevel, r_elevel; // To reduce emptiness levels in adjacent lanes in a single value
+
+	int car_id;
+	double s_nearest_car;
+
+
+	/* Get decision */
+	/****************/
+
+	// Compute emptiness levels
 	for(int i=0; i<sensor_fusion.size(); i++)
 	{
-		other_car_d = sensor_fusion[i][6];
 
-		// Is there another car in my lane?
-		if(other_car_d < next_d + lane_width/2 \
-			&& other_car_d > next_d - lane_width/2)
+		l_elevel_ls.push_back(\
+			make_pair(emptiness_level(desired_lane - 1, lane_width, lanes_available, sensor_fusion[i], \
+				size_previous_path, car_s, col_avoidance.safe_gap), i));
+
+		curr_elevel_ls.push_back(\
+			make_pair(emptiness_level(desired_lane 	  , lane_width, lanes_available, sensor_fusion[i], \
+				size_previous_path, car_s, col_avoidance.safe_gap), i));
+
+		r_elevel_ls.push_back(\
+			make_pair(emptiness_level(desired_lane + 1, lane_width, lanes_available, sensor_fusion[i], \
+				size_previous_path, car_s, col_avoidance.safe_gap), i));
+	}
+
+	// Reduce levels to a single value
+	auto compare_first = [](pair<e_level, int> i, pair<e_level, int> j) {return i.first < j.first;};
+
+	l_elevel = *max_element(l_elevel_ls.begin(), l_elevel_ls.end(), compare_first);
+	curr_elevel = *max_element(curr_elevel_ls.begin(), curr_elevel_ls.end(), compare_first);
+	r_elevel = *max_element(r_elevel_ls.begin(), r_elevel_ls.end(), compare_first);
+
+	// If there is no problem, just continue in lane
+	if (curr_elevel.first == TOTALLY_EMPTY)
+	{
+		curr_state = KL;
+		col_avoidance.closeness = not_close;
+		car_id = curr_elevel.second;
+	}
+	// A problem happens
+	else
+	{
+		// It's there any lane better?
+		if(l_elevel.first < curr_elevel.first)
 		{
-			vx = sensor_fusion[i][3];
-			vy = sensor_fusion[i][4];
-			check_speed = sqrt(vx*vx + vy*vy);
-			check_car_s = sensor_fusion[i][5];
+			// Left lane is interesting, but how much?
+			if(l_elevel.first == TOTALLY_EMPTY)
+				curr_state = LCL;
+			else
+			{
+				curr_state == PLCL;
 
-			check_car_s += (double)size_previous_path*0.02*check_speed; // Because we are reusing previous points
+				car_id = l_elevel.second;
+				vx = sensor_fusion[car_id][3];
+				vy = sensor_fusion[car_id][4];
+				check_speed = sqrt(vx*vx + vy*vy);
+				check_car_s = sensor_fusion[car_id][5];
 
-			// Is it the car in front of me and too close?
-			frontal_gap = check_car_s - car_s;
+				check_car_s += (double)size_previous_path*0.02*check_speed; // Because we are reusing previous points
+				s_nearest_car = check_car_s;
+			}
+		}
+		else if(r_elevel.first < curr_elevel.first)
+		{
+			// Right lane is interesting, but how much?
+			if(r_elevel.first == TOTALLY_EMPTY)
+				curr_state = LCR;
+			else
+			{
+				curr_state == PLCR;
+				
+				car_id = l_elevel.second;
+				vx = sensor_fusion[car_id][3];
+				vy = sensor_fusion[car_id][4];
+				check_speed = sqrt(vx*vx + vy*vy);
+				check_car_s = sensor_fusion[car_id][5];
 
-			if( (check_car_s > car_s) \
-				&& frontal_gap < col_avoidance.min_frontal_gap)
+				check_car_s += (double)size_previous_path*0.02*check_speed; // Because we are reusing previous points
+				s_nearest_car = check_car_s;
+			}
+		}
+		// If it's not better in other places, we should keep
+		else
+		{
+			curr_state = KL;
+			col_avoidance.closeness = too_close;
+			car_id = curr_elevel.second;
+		}
+
+	}
+
+	/* Execute decision */
+	/********************/
+
+	// TODO listo
+	switch(curr_state)
+	{
+		case KL:
+
+			frontal_gap = compute_gap(sensor_fusion[car_id], size_previous_path, car_s);
+
+			// Are we too close? (frontal_gap is only frontal if it's bigger than 0)
+			if( (frontal_gap > 0) && (frontal_gap < col_avoidance.min_frontal_gap) )
 			{
 				// Is it an emergency?
 				if(frontal_gap < col_avoidance.emergency_min_frontal_gap)
@@ -253,19 +444,53 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 					// TODO DEBUG
 					cout << "Too close. Frontal gap: " << frontal_gap << " curr_vel: " << curr_vel << endl;
 				}
-
 			}
-		}
+			else
+			{			
+				curr_vel = fmin(curr_vel + v_man.step_up_vel, v_man.target_vel);
+
+				// TODO DEBUG
+				cout << "We are safe." << " curr_vel: " << curr_vel << endl;
+			}
+
+			break;
+			
+		case PLCL:
+
+			curr_vel = fmax(1, curr_vel - v_man.step_down_vel);
+
+			if (car_s < s_nearest_car + col_avoidance.safe_gap)
+				curr_state = LCL;
+
+			break;
+
+		case PLCR:
+
+			curr_vel = fmax(1, curr_vel - v_man.step_down_vel);
+
+			if (car_s < s_nearest_car + col_avoidance.safe_gap)
+				curr_state = LCR;
+
+			break;
+
+
+		case LCL:
+
+			desired_lane += 1;
+
+			break;
+
+		case LCR:
+
+			desired_lane -= 1;
+
+			break;
 	}
 
-	// We are safe
-	if (col_avoidance.closeness == not_close)
-	{
-		curr_vel = fmin(curr_vel + v_man.step_up_vel, v_man.target_vel);
 
-		// TODO DEBUG
-		cout << "We are safe." << " curr_vel: " << curr_vel << endl;
-	}
+
+
+
 
 
 
