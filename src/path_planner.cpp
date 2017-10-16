@@ -227,9 +227,9 @@ double compute_gap(const vector<double> &car, int size_previous_path, double car
 	check_car_s += (double)size_previous_path*0.02*check_speed; // Because we are reusing previous points
 
 	// Is it the car too close?
-	double frontal_gap = check_car_s - car_s;
+	double gap = check_car_s - car_s;
 
-	return frontal_gap;
+	return gap;
 }
 
 
@@ -244,7 +244,7 @@ e_level emptiness_level(int target_lane, int lane_width, int lanes_available, co
 	double inf = numeric_limits<double>::max();
 
 	// Check if lane has sense
-	if(target_lane < 0 || target_lane > lanes_available)
+	if(target_lane < 0 || target_lane >= lanes_available)
 		return NOT_EMPTY;
 
 	// Check if there is a car in this lane
@@ -259,7 +259,7 @@ e_level emptiness_level(int target_lane, int lane_width, int lanes_available, co
 		// Check car_s in respect to my s
 		double gap = compute_gap(other_car, size_previous_path, car_s);
 
-		if(fabs(gap) > safe_gap)
+		if(fabs(gap) > safe_gap) // Warning: this will return an ALMOST_EMPTY even if I have a car in my back that is too close.
 			return TOTALLY_EMPTY;
 		else
 			return ALMOST_EMPTY;
@@ -304,7 +304,7 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 	Velocity_manager v_man = {.target_vel = 49.5, .step_up_vel = 1.0, \
 		.step_down_vel = 0.5, .emergency_step_down_vel = 10.0};
 
-	int lanes_available = 3; // TODO check
+	int lanes_available = 3;
 	static double desired_lane = 1;
 	double lane_width = 4;
 	double next_d = desired_lane*lane_width + lane_width/2;
@@ -316,7 +316,7 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 
 	double vx, vy, check_speed, check_car_s;
 	double other_car_d;
-	double frontal_gap;
+	double gap;
 
 	static finite_state_machine curr_state = KL;
 
@@ -347,6 +347,7 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 				size_previous_path, car_s, col_avoidance.safe_gap), i));
 	}
 
+
 	// Reduce levels to a single value
 	auto compare_first = [](pair<e_level, int> i, pair<e_level, int> j) {return i.first < j.first;};
 
@@ -354,16 +355,41 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 	curr_elevel = *max_element(curr_elevel_ls.begin(), curr_elevel_ls.end(), compare_first);
 	r_elevel = *max_element(r_elevel_ls.begin(), r_elevel_ls.end(), compare_first);
 
+
+
+	car_id = curr_elevel.second;
+	gap = compute_gap(sensor_fusion[car_id], size_previous_path, car_s);
+
 	// If there is no problem, just continue in lane
-	if (curr_elevel.first == TOTALLY_EMPTY)
+	if ( (curr_elevel.first == TOTALLY_EMPTY) \
+		|| (curr_elevel.first == ALMOST_EMPTY && (gap < 0)) ) // negative gap means the car is behind
 	{
+		//TODO DEBUG
+		cout << "There is no problem" << endl;
+
 		curr_state = KL;
 		col_avoidance.closeness = not_close;
-		car_id = curr_elevel.second;
 	}
 	// A problem happens
 	else
 	{
+		//TODO DEBUG
+		cout << "Problem in my lane detected" << endl;
+		auto print = [](pair<e_level, int> e){ cout << "(" << e.first << ", " << e.second << "). ";};
+
+		cout << "l_elevel: ";
+		print(l_elevel);
+		//for_each(l_elevel_ls.begin(), l_elevel_ls.end(), print);
+		cout << endl << "curr_elevel: ";
+		print(curr_elevel);
+		//for_each(curr_elevel_ls.begin(), curr_elevel_ls.end(), print);
+		cout << endl << "r_elevel: ";
+		print(r_elevel);
+		//for_each(r_elevel_ls.begin(), r_elevel_ls.end(), print);
+		cout << endl;
+		//TODO DEBUG
+
+
 		// It's there any lane better?
 		if(l_elevel.first < curr_elevel.first)
 		{
@@ -408,6 +434,10 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 		{
 			curr_state = KL;
 			col_avoidance.closeness = too_close;
+
+			if(gap < col_avoidance.emergency_min_frontal_gap)
+				col_avoidance.closeness = emergency_too_close;
+
 			car_id = curr_elevel.second;
 		}
 
@@ -416,42 +446,48 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 	/* Execute decision */
 	/********************/
 
-	// TODO listo
 	switch(curr_state)
 	{
 		case KL:
 
-			frontal_gap = compute_gap(sensor_fusion[car_id], size_previous_path, car_s);
-
-			// Are we too close? (frontal_gap is only frontal if it's bigger than 0)
-			if( (frontal_gap > 0) && (frontal_gap < col_avoidance.min_frontal_gap) )
+			switch(col_avoidance.closeness)
 			{
-				// Is it an emergency?
-				if(frontal_gap < col_avoidance.emergency_min_frontal_gap)
-				{
-					curr_vel = fmax(1, curr_vel - v_man.emergency_step_down_vel);
-					col_avoidance.closeness = emergency_too_close;
+				case not_close:
+
+					curr_vel = fmin(curr_vel + v_man.step_up_vel, v_man.target_vel);
 
 					// TODO DEBUG
-					cout << "Emergency. Frontal gap: " << frontal_gap << " curr_vel: " << curr_vel << endl;
-				}
-				// Not emergency but too close
-				else
-				{
+					cout << "We are safe." << " curr_vel: " << curr_vel << endl;
+
+					break;
+
+				case too_close:
+
 					curr_vel = fmax(1, curr_vel - v_man.step_down_vel);
 					col_avoidance.closeness = too_close;
 
 					// TODO DEBUG
-					cout << "Too close. Frontal gap: " << frontal_gap << " curr_vel: " << curr_vel << endl;
-				}
-			}
-			else
-			{			
-				curr_vel = fmin(curr_vel + v_man.step_up_vel, v_man.target_vel);
+					cout << "Too close. Frontal gap: " << gap << " curr_vel: " << curr_vel << endl;
 
-				// TODO DEBUG
-				cout << "We are safe." << " curr_vel: " << curr_vel << endl;
+					break;
+
+				case emergency_too_close:
+
+					curr_vel = fmax(1, curr_vel - v_man.emergency_step_down_vel);
+					col_avoidance.closeness = emergency_too_close;
+
+					// TODO DEBUG
+					cout << "Emergency. Frontal gap: " << gap << " curr_vel: " << curr_vel << endl;
+
+					break;
+
+				default:
+					cout << "There is a bug in switch(col_avoidance.closeness)" << endl;
+					exit(-1);
 			}
+
+			//TODO DEBUG
+			cout << "KL state" << endl;
 
 			break;
 			
@@ -462,6 +498,9 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 			if (car_s < s_nearest_car + col_avoidance.safe_gap)
 				curr_state = LCL;
 
+			//TODO DEBUG
+			cout << "PLCL state" << endl;
+
 			break;
 
 		case PLCR:
@@ -471,20 +510,33 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 			if (car_s < s_nearest_car + col_avoidance.safe_gap)
 				curr_state = LCR;
 
+			//TODO DEBUG
+			cout << "PLCR state" << endl;
+
 			break;
 
 
 		case LCL:
 
-			desired_lane += 1;
+			desired_lane -= 1;
+
+			//TODO DEBUG
+			cout << "LCL state" << endl;
 
 			break;
 
 		case LCR:
 
-			desired_lane -= 1;
+			desired_lane += 1;
+
+			//TODO DEBUG
+			cout << "LCR state" << endl;
 
 			break;
+
+		default:
+			cout << "There is a bug in switch(curr_state)" << endl;
+			exit(-1);
 	}
 
 
