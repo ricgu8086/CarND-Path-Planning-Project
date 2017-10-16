@@ -180,7 +180,8 @@ struct Collision_avoidance
 {
 	double min_frontal_gap; // Minimum frontal space in meters to keep before reducing speed
 	double emergency_min_frontal_gap; // Minimum frontal space in meters to make an emergency brake
-	double safe_gap; // Distance in meter that delimite a safe area around the car to consider a lane change is secure
+	double frontal_safe_gap; // Distance in meter that delimite a safe area around the car to consider a lane change is secure
+	double rear_safe_gap;
 	closeness_level closeness; // not_close if we are above min_frontal_gap
 								// too_close if we are below min_frontal_gap threshold
 								// emergency_too_close if we are below emergency_min_frontal_gap threshold
@@ -239,7 +240,7 @@ double compute_gap(const vector<double> &car, int size_previous_path, double car
 
 */
 e_level emptiness_level(int target_lane, int lane_width, int lanes_available, const vector<double> &other_car, \
-	int size_previous_path, double car_s, double safe_gap)
+	int size_previous_path, double car_s, double frontal_safe_gap, double rear_safe_gap)
 {
 	double inf = numeric_limits<double>::max();
 
@@ -259,10 +260,14 @@ e_level emptiness_level(int target_lane, int lane_width, int lanes_available, co
 		// Check car_s in respect to my s
 		double gap = compute_gap(other_car, size_previous_path, car_s);
 
-		if(fabs(gap) > safe_gap) // Warning: this will return an ALMOST_EMPTY even if I have a car in my back that is too close.
+		// A positive gap means the car is in front
+
+		if(gap > 0 && gap > frontal_safe_gap)
+			return TOTALLY_EMPTY;
+		else if(gap < 0 && rear_safe_gap)
 			return TOTALLY_EMPTY;
 		else
-			return ALMOST_EMPTY;
+			return NOT_EMPTY;
 
 	}
 	// There is no car
@@ -301,18 +306,18 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 					const vector< vector<double> > &sensor_fusion)
 {
 	static double curr_vel = 0.0; // This is to avoid the cold start problem (to avoid surpass max jerk)
-	Velocity_manager v_man = {.target_vel = 49.5, .step_up_vel = 1.0, \
+	Velocity_manager v_man = {.target_vel = 49.5, .step_up_vel = 0.7, \
 		.step_down_vel = 0.5, .emergency_step_down_vel = 10.0};
 
 	int lanes_available = 3;
 	static double desired_lane = 1;
 	double lane_width = 4;
-	double next_d = desired_lane*lane_width + lane_width/2;
+	double next_d;
 	unsigned int size_previous_path = previous_path_x.size();
 	vector<double> ptsx, ptsy; // List of widely spaced waypoints evenly spaced at 30 m
 
 	Collision_avoidance col_avoidance = {.min_frontal_gap = 40,	.emergency_min_frontal_gap = 25, \
-		.safe_gap = col_avoidance.min_frontal_gap + 10, .closeness = not_close};
+		.frontal_safe_gap = col_avoidance.min_frontal_gap, .rear_safe_gap = 15, .closeness = not_close};
 
 	double vx, vy, check_speed, check_car_s;
 	double other_car_d;
@@ -336,21 +341,22 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 
 		l_elevel_ls.push_back(\
 			make_pair(emptiness_level(desired_lane - 1, lane_width, lanes_available, sensor_fusion[i], \
-				size_previous_path, car_s, col_avoidance.safe_gap), i));
+				size_previous_path, car_s, col_avoidance.frontal_safe_gap, col_avoidance.rear_safe_gap), i));
 
 		curr_elevel_ls.push_back(\
 			make_pair(emptiness_level(desired_lane 	  , lane_width, lanes_available, sensor_fusion[i], \
-				size_previous_path, car_s, col_avoidance.safe_gap), i));
+				size_previous_path, car_s, col_avoidance.frontal_safe_gap, col_avoidance.rear_safe_gap), i));
 
 		r_elevel_ls.push_back(\
 			make_pair(emptiness_level(desired_lane + 1, lane_width, lanes_available, sensor_fusion[i], \
-				size_previous_path, car_s, col_avoidance.safe_gap), i));
+				size_previous_path, car_s, col_avoidance.frontal_safe_gap, col_avoidance.rear_safe_gap), i));
 	}
 
 
 	// Reduce levels to a single value
 	auto compare_first = [](pair<e_level, int> i, pair<e_level, int> j) {return i.first < j.first;};
 
+	// TODO For other lanes, I will be interested only in the car with smallest s which is in my safety area
 	l_elevel = *max_element(l_elevel_ls.begin(), l_elevel_ls.end(), compare_first);
 	curr_elevel = *max_element(curr_elevel_ls.begin(), curr_elevel_ls.end(), compare_first);
 	r_elevel = *max_element(r_elevel_ls.begin(), r_elevel_ls.end(), compare_first);
@@ -364,9 +370,6 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 	if ( (curr_elevel.first == TOTALLY_EMPTY) \
 		|| (curr_elevel.first == ALMOST_EMPTY && (gap < 0)) ) // negative gap means the car is behind
 	{
-		//TODO DEBUG
-		cout << "There is no problem" << endl;
-
 		curr_state = KL;
 		col_avoidance.closeness = not_close;
 	}
@@ -450,6 +453,9 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 	{
 		case KL:
 
+			// TODO DEBUG
+			cout << "KL state. ";
+
 			switch(col_avoidance.closeness)
 			{
 				case not_close:
@@ -486,20 +492,17 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 					exit(-1);
 			}
 
-			//TODO DEBUG
-			cout << "KL state" << endl;
-
 			break;
 			
 		case PLCL:
 
 			curr_vel = fmax(1, curr_vel - v_man.step_down_vel);
 
-			if (car_s < s_nearest_car + col_avoidance.safe_gap)
+			if (car_s < s_nearest_car + col_avoidance.frontal_safe_gap)
 				curr_state = LCL;
 
 			//TODO DEBUG
-			cout << "PLCL state" << endl;
+			cout << "PLCL state" << " curr_vel: " << curr_vel << endl;
 
 			break;
 
@@ -507,11 +510,11 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 
 			curr_vel = fmax(1, curr_vel - v_man.step_down_vel);
 
-			if (car_s < s_nearest_car + col_avoidance.safe_gap)
+			if (car_s < s_nearest_car + col_avoidance.frontal_safe_gap)
 				curr_state = LCR;
 
 			//TODO DEBUG
-			cout << "PLCR state" << endl;
+			cout << "PLCR state" << " curr_vel: " << curr_vel << endl;
 
 			break;
 
@@ -519,18 +522,20 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 		case LCL:
 
 			desired_lane -= 1;
+			curr_vel = fmax(1, curr_vel - v_man.step_down_vel); // To avoid exceeding max jerk
 
 			//TODO DEBUG
-			cout << "LCL state" << endl;
+			cout << "LCL state" << " curr_vel: " << curr_vel << endl;
 
 			break;
 
 		case LCR:
 
 			desired_lane += 1;
+			curr_vel = fmax(1, curr_vel - v_man.step_down_vel); // To avoid exceeding max jerk
 
 			//TODO DEBUG
-			cout << "LCR state" << endl;
+			cout << "LCR state"  << " curr_vel: " << curr_vel << endl;
 
 			break;
 
@@ -539,9 +544,7 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 			exit(-1);
 	}
 
-
-
-
+	next_d = desired_lane*lane_width + lane_width/2;
 
 
 
