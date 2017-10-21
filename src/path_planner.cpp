@@ -306,8 +306,8 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 					const vector< vector<double> > &sensor_fusion)
 {
 	static double curr_vel = 0.0; // This is to avoid the cold start problem (to avoid surpass max jerk)
-	Velocity_manager v_man = {.target_vel = 49.5, .step_up_vel = 0.7, \
-		.step_down_vel = 0.5, .emergency_step_down_vel = 10.0};
+	Velocity_manager v_man = {.target_vel = 49., .step_up_vel = 0.7, \
+		.step_down_vel = 0.5, .emergency_step_down_vel = 2.0};
 
 	int lanes_available = 3;
 	static double desired_lane = 1;
@@ -330,120 +330,119 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 
 	int car_id;
 	double s_nearest_car;
+	int full_transition = 18;
+	double step = 1.0/full_transition;
+	static int transition = 0;
 
 
-	/* Get decision */
-	/****************/
-
-	// Compute emptiness levels
-	for(int i=0; i<sensor_fusion.size(); i++)
+	if(curr_state != PLCL && curr_state != PLCL)
 	{
+		/* Get decision */
+		/****************/
 
-		l_elevel_ls.push_back(\
-			make_pair(emptiness_level(desired_lane - 1, lane_width, lanes_available, sensor_fusion[i], \
-				size_previous_path, car_s, col_avoidance.frontal_safe_gap, col_avoidance.rear_safe_gap), i));
-
-		curr_elevel_ls.push_back(\
-			make_pair(emptiness_level(desired_lane 	  , lane_width, lanes_available, sensor_fusion[i], \
-				size_previous_path, car_s, col_avoidance.frontal_safe_gap, col_avoidance.rear_safe_gap), i));
-
-		r_elevel_ls.push_back(\
-			make_pair(emptiness_level(desired_lane + 1, lane_width, lanes_available, sensor_fusion[i], \
-				size_previous_path, car_s, col_avoidance.frontal_safe_gap, col_avoidance.rear_safe_gap), i));
-	}
-
-
-	// Reduce levels to a single value
-	auto compare_first = [](pair<e_level, int> i, pair<e_level, int> j) {return i.first < j.first;};
-
-	// TODO For other lanes, I will be interested only in the car with smallest s which is in my safety area
-	l_elevel = *max_element(l_elevel_ls.begin(), l_elevel_ls.end(), compare_first);
-	curr_elevel = *max_element(curr_elevel_ls.begin(), curr_elevel_ls.end(), compare_first);
-	r_elevel = *max_element(r_elevel_ls.begin(), r_elevel_ls.end(), compare_first);
-
-
-
-	car_id = curr_elevel.second;
-	gap = compute_gap(sensor_fusion[car_id], size_previous_path, car_s);
-
-	// If there is no problem, just continue in lane
-	if ( (curr_elevel.first == TOTALLY_EMPTY) \
-		|| (curr_elevel.first == ALMOST_EMPTY && (gap < 0)) ) // negative gap means the car is behind
-	{
-		curr_state = KL;
-		col_avoidance.closeness = not_close;
-	}
-	// A problem happens
-	else
-	{
-		//TODO DEBUG
-		cout << "Problem in my lane detected" << endl;
-		auto print = [](pair<e_level, int> e){ cout << "(" << e.first << ", " << e.second << "). ";};
-
-		cout << "l_elevel: ";
-		print(l_elevel);
-		//for_each(l_elevel_ls.begin(), l_elevel_ls.end(), print);
-		cout << endl << "curr_elevel: ";
-		print(curr_elevel);
-		//for_each(curr_elevel_ls.begin(), curr_elevel_ls.end(), print);
-		cout << endl << "r_elevel: ";
-		print(r_elevel);
-		//for_each(r_elevel_ls.begin(), r_elevel_ls.end(), print);
-		cout << endl;
-		//TODO DEBUG
-
-
-		// It's there any lane better?
-		if(l_elevel.first < curr_elevel.first)
+		// Compute emptiness levels
+		for(int i=0; i<sensor_fusion.size(); i++)
 		{
-			// Left lane is interesting, but how much?
-			if(l_elevel.first == TOTALLY_EMPTY)
-				curr_state = LCL;
-			else
-			{
-				curr_state == PLCL;
 
-				car_id = l_elevel.second;
-				vx = sensor_fusion[car_id][3];
-				vy = sensor_fusion[car_id][4];
-				check_speed = sqrt(vx*vx + vy*vy);
-				check_car_s = sensor_fusion[car_id][5];
+			l_elevel_ls.push_back(\
+				make_pair(emptiness_level(desired_lane - 1, lane_width, lanes_available, sensor_fusion[i], \
+					size_previous_path, car_s, col_avoidance.frontal_safe_gap, col_avoidance.rear_safe_gap), i));
 
-				check_car_s += (double)size_previous_path*0.02*check_speed; // Because we are reusing previous points
-				s_nearest_car = check_car_s;
-			}
+			curr_elevel_ls.push_back(\
+				make_pair(emptiness_level(desired_lane 	  , lane_width, lanes_available, sensor_fusion[i], \
+					size_previous_path, car_s, col_avoidance.frontal_safe_gap, col_avoidance.rear_safe_gap), i));
+
+			r_elevel_ls.push_back(\
+				make_pair(emptiness_level(desired_lane + 1, lane_width, lanes_available, sensor_fusion[i], \
+					size_previous_path, car_s, col_avoidance.frontal_safe_gap, col_avoidance.rear_safe_gap), i));
 		}
-		else if(r_elevel.first < curr_elevel.first)
-		{
-			// Right lane is interesting, but how much?
-			if(r_elevel.first == TOTALLY_EMPTY)
-				curr_state = LCR;
-			else
-			{
-				curr_state == PLCR;
-				
-				car_id = l_elevel.second;
-				vx = sensor_fusion[car_id][3];
-				vy = sensor_fusion[car_id][4];
-				check_speed = sqrt(vx*vx + vy*vy);
-				check_car_s = sensor_fusion[car_id][5];
 
-				check_car_s += (double)size_previous_path*0.02*check_speed; // Because we are reusing previous points
-				s_nearest_car = check_car_s;
-			}
-		}
-		// If it's not better in other places, we should keep
-		else
+
+		// Reduce levels to a single value
+		auto compare_first = [](pair<e_level, int> i, pair<e_level, int> j) {return i.first < j.first;};
+
+		// TODO For other lanes, I will be interested only in the car with smallest s which is in my safety area
+		l_elevel = *max_element(l_elevel_ls.begin(), l_elevel_ls.end(), compare_first);
+		curr_elevel = *max_element(curr_elevel_ls.begin(), curr_elevel_ls.end(), compare_first);
+		r_elevel = *max_element(r_elevel_ls.begin(), r_elevel_ls.end(), compare_first);
+
+
+
+		car_id = curr_elevel.second;
+		gap = compute_gap(sensor_fusion[car_id], size_previous_path, car_s);
+
+		// If there is no problem, just continue in lane
+		if ( (curr_elevel.first == TOTALLY_EMPTY) \
+			|| (curr_elevel.first == ALMOST_EMPTY && (gap < 0)) ) // negative gap means the car is behind
 		{
 			curr_state = KL;
-			col_avoidance.closeness = too_close;
-
-			if(gap < col_avoidance.emergency_min_frontal_gap)
-				col_avoidance.closeness = emergency_too_close;
-
-			car_id = curr_elevel.second;
+			col_avoidance.closeness = not_close;
 		}
+		// A problem happens
+		else
+		{
+			//TODO DEBUG
+			cout << "Problem in my lane detected" << endl;
+			auto print = [](pair<e_level, int> e){ cout << "(" << e.first << ", " << e.second << "). ";};
 
+			cout << "l_elevel: ";
+			print(l_elevel);
+			cout << "d: " << sensor_fusion[l_elevel.second][6];
+			//for_each(l_elevel_ls.begin(), l_elevel_ls.end(), print);
+			cout << endl << "curr_elevel: ";
+			print(curr_elevel);
+			cout << "d: " << sensor_fusion[curr_elevel.second][6];
+			//for_each(curr_elevel_ls.begin(), curr_elevel_ls.end(), print);
+			cout << endl << "r_elevel: ";
+			print(r_elevel);
+			cout << "d: " << sensor_fusion[r_elevel.second][6];
+			//for_each(r_elevel_ls.begin(), r_elevel_ls.end(), print);
+			cout << endl;
+			//TODO DEBUG
+
+
+			// It's there any lane better?
+			if(l_elevel.first < curr_elevel.first)
+			{
+				curr_state = PLCL;
+			}
+			else if(r_elevel.first < curr_elevel.first)
+			{
+				curr_state = PLCR;
+			}
+			// If it's not better in other places, we should keep
+			else
+			{
+				curr_state = KL;
+				col_avoidance.closeness = too_close;
+
+				if(gap < col_avoidance.emergency_min_frontal_gap)
+					col_avoidance.closeness = emergency_too_close;
+
+				car_id = curr_elevel.second;
+			}
+
+		}
+	}
+	else if(curr_state == PLCL)
+	{
+		transition ++;
+
+		if(transition == full_transition)
+		{
+			curr_state = LCL;
+			transition = 0;
+		}
+	}
+	else if(curr_state == PLCR)
+	{
+		transition ++;
+
+		if(transition == full_transition)
+		{
+			curr_state = LCR;
+			transition = 0;
+		}
 	}
 
 	/* Execute decision */
@@ -496,10 +495,8 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 			
 		case PLCL:
 
-			curr_vel = fmax(1, curr_vel - v_man.step_down_vel);
-
-			if (car_s < s_nearest_car + col_avoidance.frontal_safe_gap)
-				curr_state = LCL;
+			desired_lane -= step;
+			transition += step;
 
 			//TODO DEBUG
 			cout << "PLCL state" << " curr_vel: " << curr_vel << endl;
@@ -508,10 +505,8 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 
 		case PLCR:
 
-			curr_vel = fmax(1, curr_vel - v_man.step_down_vel);
-
-			if (car_s < s_nearest_car + col_avoidance.frontal_safe_gap)
-				curr_state = LCR;
+			desired_lane += step;
+			transition += step;
 
 			//TODO DEBUG
 			cout << "PLCR state" << " curr_vel: " << curr_vel << endl;
@@ -521,18 +516,12 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 
 		case LCL:
 
-			desired_lane -= 1;
-			curr_vel = fmax(1, curr_vel - v_man.step_down_vel); // To avoid exceeding max jerk
-
 			//TODO DEBUG
 			cout << "LCL state" << " curr_vel: " << curr_vel << endl;
 
 			break;
 
 		case LCR:
-
-			desired_lane += 1;
-			curr_vel = fmax(1, curr_vel - v_man.step_down_vel); // To avoid exceeding max jerk
 
 			//TODO DEBUG
 			cout << "LCR state"  << " curr_vel: " << curr_vel << endl;
@@ -545,6 +534,10 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 	}
 
 	next_d = desired_lane*lane_width + lane_width/2;
+
+	// TODO DEBUG
+	if (curr_state == PLCL || curr_state == PLCR)
+		cout << "next_d: " << next_d << endl;
 
 
 
