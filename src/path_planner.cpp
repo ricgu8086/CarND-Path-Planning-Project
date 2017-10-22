@@ -195,6 +195,7 @@ struct Velocity_manager
 	double step_up_vel; // Slowly increase velocity byt step_up_vel
 	double step_down_vel; // Slowly decrease velocity byt step_down_vel
 	double emergency_step_down_vel; // Quickly decrease velocity by emergency_step_down_vel
+	double changing_lane_vel; // Minimum velocity to change to another lane (this way we prevent possible crashes)
 };
 
 enum finite_state_machine 
@@ -325,7 +326,7 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 {
 	static double curr_vel = 0.0; // This is to avoid the cold start problem (to avoid surpass max jerk)
 	Velocity_manager v_man = {.target_vel = 49., .step_up_vel = 0.7, \
-		.step_down_vel = 0.5, .emergency_step_down_vel = 2.0};
+		.step_down_vel = 0.5, .emergency_step_down_vel = 2.0, .changing_lane_vel = v_man.target_vel/2.0};
 
 	int lanes_available = 3;
 	static double desired_lane = 1;
@@ -485,11 +486,13 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 
 
 			// It's there any lane better?
-			if(l_elevel.first < curr_elevel.first)
+			if(l_elevel.first < curr_elevel.first \
+				&& curr_vel >= v_man.changing_lane_vel) // To ensure a very slow car doesn't change lane causing a crash with another car
 			{
 				curr_state = PLCL;
 			}
-			else if(r_elevel.first < curr_elevel.first)
+			else if(r_elevel.first < curr_elevel.first \
+				&& curr_vel >= v_man.changing_lane_vel) // To ensure a very slow car doesn't change lane causing a crash with another car
 			{
 				curr_state = PLCR;
 			}
