@@ -319,7 +319,7 @@ void cost_lane_changing(int future_lane, finite_state_machine future_state, map<
 
 vector< vector<double> > path_planner(const vector<double> &previous_path_x, const vector<double> &previous_path_y, \
 					double car_x, double car_y, double car_yaw, \
-					double car_s, vector<double> &map_waypoints_s, \
+					double car_s, double car_d, vector<double> &map_waypoints_s, \
 					vector<double> &map_waypoints_x, vector<double> &map_waypoints_y, \
 					const vector< vector<double> > &sensor_fusion)
 {
@@ -353,13 +353,13 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 	double step = 1.0/full_transition;
 	static int transition = 0;
 
-	int target_lane;
+	double lane_center;
 
 	// TODO DEBUG
 	cout << "desired_lane: " << desired_lane << endl;
 	cout << "curr_state: " << curr_state << endl;
 
-	if(curr_state != PLCL && curr_state != PLCR)
+	if(curr_state == KL)
 	{
 		/* Get decision */
 		/****************/
@@ -513,6 +513,7 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 
 		if(transition == full_transition)
 		{
+			desired_lane = abs(round(desired_lane)); // This is mostly a cosmetic feature, to avoid being in lane -3.0531e-16 and similar
 			curr_state = LCL;
 			transition = 0;
 		}
@@ -523,9 +524,22 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 
 		if(transition == full_transition)
 		{
+			desired_lane = abs(round(desired_lane)); // This is mostly a cosmetic feature, to avoid being in lane -3.0531e-16 and similar
 			curr_state = LCR;
 			transition = 0;
 		}
+	}
+	else if(curr_state == LCL || curr_state == LCR)
+	{
+			lane_center = desired_lane*lane_width + (double)lane_width/2.0;
+			
+			// If the car is almost in the center of the lane we have finished the transition
+
+			// TODO DEBUG
+			cout << "Distance to center: " << abs(car_d - lane_center) << " , max_dist: " << 4*step << endl;
+
+			if(abs(car_d - lane_center) < 4*step)
+				curr_state = KL;
 	}
 
 	/* Execute decision */
