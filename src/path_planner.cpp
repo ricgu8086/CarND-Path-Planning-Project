@@ -216,6 +216,17 @@ enum e_level
 	NOT_SENSE
 };
 
+enum s_fusion
+{
+	ID,				// car's unique ID
+	CAR_X,			// car's x position in map coordinates
+	CAR_Y,			// car's y position in map coordinates
+	CAR_X_VEL_MS,	// car's x velocity in m/s
+	CAR_Y_VEL_MS,	// car's y velocity in m/s
+	CAR_S,			// car's s position in frenet coordinates
+	CAR_D 			// car's d position in frenet coordinates
+};
+
 
 /**
 	Given a car in the same lane, it computes the gap between us and the car.
@@ -223,10 +234,10 @@ enum e_level
 */
 double compute_gap(const vector<double> &car, int size_previous_path, double car_s)
 {
-	double vx = car[3];
-	double vy = car[4];
+	double vx = car[CAR_X_VEL_MS];
+	double vy = car[CAR_Y_VEL_MS];
 	double check_speed = sqrt(vx*vx + vy*vy);
-	double check_car_s = car[5];
+	double check_car_s = car[CAR_S];
 
 	check_car_s += (double)size_previous_path*0.02*check_speed; // Because we are reusing previous points
 
@@ -250,7 +261,7 @@ inline bool lane_makes_sense(int target_lane, int lanes_available)
 */
 inline bool is_in_this_lane(int target_lane, const vector<double> &other_car, int lane_width)
 {
-	double other_car_d = other_car[6];
+	double other_car_d = other_car[CAR_D];
 	double lane_center = target_lane*lane_width + (double)lane_width/2.0;
 	double right_limit = lane_center + (double)lane_width/2.0;
 	double left_limit = lane_center - (double)lane_width/2.0;
@@ -338,8 +349,6 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 	Collision_avoidance col_avoidance = {.min_frontal_gap = 45,	.emergency_min_frontal_gap = 25, \
 		.frontal_safe_gap = col_avoidance.min_frontal_gap, .rear_safe_gap = 15, .closeness = not_close};
 
-	double vx, vy, check_speed, check_car_s;
-	double other_car_d;
 	double gap;
 
 	static finite_state_machine curr_state = KL;
@@ -355,6 +364,7 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 	static int transition = 0;
 
 	double lane_center;
+	double vx, vy, frontal_car_vel;
 
 	// TODO DEBUG
 	cout << "desired_lane: " << desired_lane << endl;
@@ -568,7 +578,13 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 
 				case too_close:
 
-					curr_vel = fmax(1, curr_vel - v_man.step_down_vel);
+					//curr_vel = fmax(1, curr_vel - v_man.step_down_vel);
+					vx = sensor_fusion[car_id][CAR_X_VEL_MS];
+					vy = sensor_fusion[car_id][CAR_Y_VEL_MS];
+					frontal_car_vel = sqrt(vx*vx + vy*vy);
+
+					// Don't need to slow down too much. 80% of previous vehicle's speed is just fine
+					curr_vel = fmax(frontal_car_vel*0.8, curr_vel - v_man.step_down_vel); 
 					col_avoidance.closeness = too_close;
 
 					// TODO DEBUG
