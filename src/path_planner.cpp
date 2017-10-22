@@ -208,9 +208,11 @@ enum finite_state_machine
 
 enum e_level
 {
+	NOT_HERE,		// The vehicle analyzed it's not driving in this lane
 	TOTALLY_EMPTY, 	// There is no car in a safe area around my car
 	ALMOST_EMPTY, 	// Cannot incorporate right now, need to locate behind the following car)
-	NOT_EMPTY 		// There is no drivable empty space in this lane
+	NOT_EMPTY, 		// There is no drivable empty space in this lane
+	NOT_SENSE
 };
 
 
@@ -233,6 +235,30 @@ double compute_gap(const vector<double> &car, int size_previous_path, double car
 	return gap;
 }
 
+inline bool lane_makes_sense(int target_lane, int lanes_available)
+{
+	if(target_lane < 0 || target_lane >= lanes_available)
+		return false;
+
+	return true;
+}
+
+/** 
+	Returns wether a given car is in this lane or not
+
+*/
+inline bool is_in_this_lane(int target_lane, const vector<double> &other_car, int lane_width)
+{
+	double other_car_d = other_car[6];
+	double lane_center = target_lane*lane_width + (double)lane_width/2.0;
+	double right_limit = lane_center + (double)lane_width/2.0;
+	double left_limit = lane_center - (double)lane_width/2.0;
+
+	if( (other_car_d < right_limit) && (other_car_d > left_limit) )
+		return true;
+	else
+		return false;
+}
 
 /**
     Returns the emptiness level of a lane
@@ -242,20 +268,12 @@ double compute_gap(const vector<double> &car, int size_previous_path, double car
 e_level emptiness_level(int target_lane, int lane_width, int lanes_available, const vector<double> &other_car, \
 	int size_previous_path, double car_s, double frontal_safe_gap, double rear_safe_gap)
 {
-	double inf = numeric_limits<double>::max();
-
 	// Check if lane has sense
-	if(target_lane < 0 || target_lane >= lanes_available)
-		return NOT_EMPTY;
+	if(!lane_makes_sense(target_lane, lanes_available))
+		return NOT_SENSE;
 
 	// Check if there is a car in this lane
-
-	double other_car_d = other_car[6];
-	double lane_center = target_lane*lane_width + lane_width/2;
-
-	// There is a car
-	if(other_car_d < lane_center + lane_width/2 \
-			&& other_car_d > lane_center - lane_width/2)
+	if(is_in_this_lane(target_lane, other_car, lane_width))
 	{
 		// Check car_s in respect to my s
 		double gap = compute_gap(other_car, size_previous_path, car_s);
@@ -272,7 +290,7 @@ e_level emptiness_level(int target_lane, int lane_width, int lanes_available, co
 	}
 	// There is no car
 	else 
-		return TOTALLY_EMPTY;
+		return NOT_HERE;
 }
 
 
@@ -316,7 +334,7 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 	unsigned int size_previous_path = previous_path_x.size();
 	vector<double> ptsx, ptsy; // List of widely spaced waypoints evenly spaced at 30 m
 
-	Collision_avoidance col_avoidance = {.min_frontal_gap = 40,	.emergency_min_frontal_gap = 25, \
+	Collision_avoidance col_avoidance = {.min_frontal_gap = 45,	.emergency_min_frontal_gap = 25, \
 		.frontal_safe_gap = col_avoidance.min_frontal_gap, .rear_safe_gap = 15, .closeness = not_close};
 
 	double vx, vy, check_speed, check_car_s;
@@ -327,6 +345,7 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 
 	vector< pair<e_level, int> > l_elevel_ls, curr_elevel_ls, r_elevel_ls; // To measure emptiness levels in adjacent lanes
 	pair<e_level, int> l_elevel, curr_elevel, r_elevel; // To reduce emptiness levels in adjacent lanes in a single value
+	e_level aux_elevel;
 
 	int car_id;
 	double s_nearest_car;
@@ -334,42 +353,106 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 	double step = 1.0/full_transition;
 	static int transition = 0;
 
+	int target_lane;
 
-	if(curr_state != PLCL && curr_state != PLCL)
+	// TODO DEBUG
+	cout << "desired_lane: " << desired_lane << endl;
+	cout << "curr_state: " << curr_state << endl;
+
+	if(curr_state != PLCL && curr_state != PLCR)
 	{
 		/* Get decision */
 		/****************/
 
 		// Compute emptiness levels
+
 		for(int i=0; i<sensor_fusion.size(); i++)
 		{
+			// Checking left lane
+			aux_elevel = emptiness_level(desired_lane - 1, lane_width, lanes_available, sensor_fusion[i], \
+						size_previous_path, car_s, col_avoidance.frontal_safe_gap, col_avoidance.rear_safe_gap);
 
-			l_elevel_ls.push_back(\
-				make_pair(emptiness_level(desired_lane - 1, lane_width, lanes_available, sensor_fusion[i], \
-					size_previous_path, car_s, col_avoidance.frontal_safe_gap, col_avoidance.rear_safe_gap), i));
+			if (aux_elevel != NOT_HERE && aux_elevel != NOT_SENSE)
+			{
+				l_elevel_ls.push_back(make_pair(aux_elevel, i));
+				continue;
+			}
 
-			curr_elevel_ls.push_back(\
-				make_pair(emptiness_level(desired_lane 	  , lane_width, lanes_available, sensor_fusion[i], \
-					size_previous_path, car_s, col_avoidance.frontal_safe_gap, col_avoidance.rear_safe_gap), i));
+			// Checking current lane
+			aux_elevel = emptiness_level(desired_lane    , lane_width, lanes_available, sensor_fusion[i], \
+						size_previous_path, car_s, col_avoidance.frontal_safe_gap, col_avoidance.rear_safe_gap);
 
-			r_elevel_ls.push_back(\
-				make_pair(emptiness_level(desired_lane + 1, lane_width, lanes_available, sensor_fusion[i], \
-					size_previous_path, car_s, col_avoidance.frontal_safe_gap, col_avoidance.rear_safe_gap), i));
+			if (aux_elevel != NOT_HERE && aux_elevel != NOT_SENSE)
+			{
+				curr_elevel_ls.push_back(make_pair(aux_elevel, i));
+				continue;
+			}
+
+
+			// Checking current lane
+			aux_elevel = emptiness_level(desired_lane + 1, lane_width, lanes_available, sensor_fusion[i], \
+						size_previous_path, car_s, col_avoidance.frontal_safe_gap, col_avoidance.rear_safe_gap);
+
+			if (aux_elevel != NOT_HERE && aux_elevel != NOT_SENSE)
+			{
+				r_elevel_ls.push_back(make_pair(aux_elevel, i));
+				continue;
+			}
 		}
+
+		// Could happen that a lane doesn't make sense and thus its associated list is empty
+		if (!lane_makes_sense(desired_lane - 1, lanes_available))
+			l_elevel_ls.push_back(make_pair(NOT_SENSE, -1));
+
+		if (!lane_makes_sense(desired_lane + 1, lanes_available))
+			r_elevel_ls.push_back(make_pair(NOT_SENSE, -1));
+
+		// TODO DEBUG
+		
+		//auto print2 = [sensor_fusion](pair<e_level, int> e){ cout << "(" << e.first << ", " << e.second << ", " << sensor_fusion[e.second][6] << ") ";};
+		auto print2 = [sensor_fusion](pair<e_level, int> e){ cout << "(" << e.first << ", " << e.second << ") ";};	
+		cout << "l_elevel_ls: ";
+		for_each(l_elevel_ls.begin(), l_elevel_ls.end(), print2);
+		cout << endl;
+		cout << "curr_elevel_ls: ";
+		for_each(curr_elevel_ls.begin(), curr_elevel_ls.end(), print2);
+		cout << endl;
+		cout << "r_elevel_ls: ";
+		for_each(r_elevel_ls.begin(), r_elevel_ls.end(), print2);
+		cout << endl;
+		
+
 
 
 		// Reduce levels to a single value
+
 		auto compare_first = [](pair<e_level, int> i, pair<e_level, int> j) {return i.first < j.first;};
 
 		// TODO For other lanes, I will be interested only in the car with smallest s which is in my safety area
-		l_elevel = *max_element(l_elevel_ls.begin(), l_elevel_ls.end(), compare_first);
-		curr_elevel = *max_element(curr_elevel_ls.begin(), curr_elevel_ls.end(), compare_first);
-		r_elevel = *max_element(r_elevel_ls.begin(), r_elevel_ls.end(), compare_first);
+		if (l_elevel_ls.size())
+			l_elevel = *max_element(l_elevel_ls.begin(), l_elevel_ls.end(), compare_first);
+		else
+			l_elevel = make_pair(TOTALLY_EMPTY, -1);
 
+		if (curr_elevel_ls.size())
+			curr_elevel = *max_element(curr_elevel_ls.begin(), curr_elevel_ls.end(), compare_first);
+		else
+			curr_elevel = make_pair(TOTALLY_EMPTY, -1);
+
+		if (r_elevel_ls.size())
+			r_elevel = *max_element(r_elevel_ls.begin(), r_elevel_ls.end(), compare_first);
+		else
+			r_elevel = make_pair(TOTALLY_EMPTY, -1);
 
 
 		car_id = curr_elevel.second;
-		gap = compute_gap(sensor_fusion[car_id], size_previous_path, car_s);
+
+		if (car_id == -1)
+			gap = numeric_limits<double>::max();
+		else
+			gap = compute_gap(sensor_fusion[car_id], size_previous_path, car_s);
+
+
 
 		// If there is no problem, just continue in lane
 		if ( (curr_elevel.first == TOTALLY_EMPTY) \
@@ -387,15 +470,15 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 
 			cout << "l_elevel: ";
 			print(l_elevel);
-			cout << "d: " << sensor_fusion[l_elevel.second][6];
+			//cout << "d: " << sensor_fusion[l_elevel.second][6];
 			//for_each(l_elevel_ls.begin(), l_elevel_ls.end(), print);
 			cout << endl << "curr_elevel: ";
 			print(curr_elevel);
-			cout << "d: " << sensor_fusion[curr_elevel.second][6];
+			//cout << "d: " << sensor_fusion[curr_elevel.second][6];
 			//for_each(curr_elevel_ls.begin(), curr_elevel_ls.end(), print);
 			cout << endl << "r_elevel: ";
 			print(r_elevel);
-			cout << "d: " << sensor_fusion[r_elevel.second][6];
+			//cout << "d: " << sensor_fusion[r_elevel.second][6];
 			//for_each(r_elevel_ls.begin(), r_elevel_ls.end(), print);
 			cout << endl;
 			//TODO DEBUG
@@ -652,7 +735,7 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 	
 	double N, x_point, y_point, x_ref, y_ref;
 
-	for(int i=1; i <= 50 - size_previous_path; i++)
+	for(int i=1; i <= 40 - size_previous_path; i++)
 	{
 		N = (target_dist / ( 0.02*mph2mps(curr_vel) )); // Each point is visited every 0.02 seconds
 		x_point = x_add_on + target_x/N;
