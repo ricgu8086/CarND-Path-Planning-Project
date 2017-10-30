@@ -212,9 +212,8 @@ enum e_level
 {
 	NOT_HERE,		// The vehicle analyzed it's not driving in this lane
 	TOTALLY_EMPTY, 	// There is no car in a safe area around my car
-	ALMOST_EMPTY, 	// Cannot incorporate right now, need to locate behind the following car)
 	NOT_EMPTY, 		// There is no drivable empty space in this lane
-	NOT_SENSE
+	NOT_SENSE		// There is no lane
 };
 
 enum s_fusion
@@ -295,7 +294,7 @@ e_level emptiness_level(int target_lane, int lane_width, int lanes_available, co
 
 		if(gap > 0 && gap > frontal_safe_gap)
 			return TOTALLY_EMPTY;
-		else if(gap < 0 && rear_safe_gap)
+		else if(gap < 0 && -gap > rear_safe_gap)
 			return TOTALLY_EMPTY;
 		else
 			return NOT_EMPTY;
@@ -319,7 +318,7 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 					const vector< vector<double> > &sensor_fusion)
 {
 	static double curr_vel = 0.0; // This is to avoid the cold start problem (to avoid surpass max jerk)
-	Velocity_manager v_man = {.target_vel = 49., .step_up_vel = 0.7, \
+	Velocity_manager v_man = {.target_vel = 49., .step_up_vel = 0.4, \
 		.step_down_vel = 0.5, .emergency_step_down_vel = 2.0, .changing_lane_vel = v_man.target_vel/2.0};
 
 	int lanes_available = 3;
@@ -330,7 +329,7 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 	vector<double> ptsx, ptsy; // List of widely spaced waypoints evenly spaced at 30 m
 
 	Collision_avoidance col_avoidance = {.min_frontal_gap = 45,	.emergency_min_frontal_gap = 25, \
-		.frontal_safe_gap = col_avoidance.min_frontal_gap, .rear_safe_gap = 15, .closeness = NOT_CLOSE};
+		.frontal_safe_gap = col_avoidance.min_frontal_gap + 5, .rear_safe_gap = 15, .closeness = NOT_CLOSE};
 
 	double gap;
 
@@ -378,7 +377,7 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 
 			// Checking current lane
 			aux_elevel = emptiness_level(desired_lane    , lane_width, lanes_available, sensor_fusion[i], \
-						size_previous_path, car_s, col_avoidance.frontal_safe_gap, col_avoidance.rear_safe_gap);
+						size_previous_path, car_s, col_avoidance.min_frontal_gap, col_avoidance.rear_safe_gap);
 
 			if (aux_elevel != NOT_HERE && aux_elevel != NOT_SENSE)
 			{
@@ -564,12 +563,13 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 					vy = sensor_fusion[car_id][CAR_Y_VEL_MS];
 					frontal_car_vel = sqrt(vx*vx + vy*vy);
 
-					// Don't need to slow down too much. 80% of previous vehicle's speed is just fine
-					curr_vel = fmax(frontal_car_vel*0.8, curr_vel - v_man.step_down_vel); 
+					// Don't need to slow down too much. 90% of previous vehicle's speed is just fine
+					curr_vel = fmax(frontal_car_vel*0.9, curr_vel - v_man.step_down_vel); 
 					col_avoidance.closeness = TOO_CLOSE;
 
 					#ifdef VERBOSE
-						cout << "Too close. Frontal gap: " << gap << " curr_vel: " << curr_vel << endl;
+						cout << "Too close. Frontal gap: " << gap << endl \
+							<< "frontal_car_vel: " << frontal_car_vel << ", curr_vel: " << curr_vel << endl;
 					#endif
 
 					break;
@@ -580,7 +580,8 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 					col_avoidance.closeness = EMERGENCY_TOO_CLOSE;
 
 					#ifdef VERBOSE
-						cout << "Emergency. Frontal gap: " << gap << " curr_vel: " << curr_vel << endl;
+						cout << "Emergency. Frontal gap: " << gap << endl \
+							<< "frontal_car_vel: " << frontal_car_vel << " curr_vel: " << curr_vel << endl;
 					#endif
 
 					break;
