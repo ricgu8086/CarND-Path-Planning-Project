@@ -8,6 +8,7 @@
 #include <limits>
 #include <algorithm>
 
+#define VERBOSE // Comment this line to hide terminal messages
 
 using namespace std;
 
@@ -174,7 +175,7 @@ inline double mps2mph(double mps)
 	return mps / 0.44704;
 }
 
-enum closeness_level {not_close, too_close, emergency_too_close};
+enum closeness_level {NOT_CLOSE, TOO_CLOSE, EMERGENCY_TOO_CLOSE};
 
 struct Collision_avoidance
 {
@@ -182,9 +183,9 @@ struct Collision_avoidance
 	double emergency_min_frontal_gap; // Minimum frontal space in meters to make an emergency brake
 	double frontal_safe_gap; // Distance in meter that delimite a safe area around the car to consider a lane change is secure
 	double rear_safe_gap;
-	closeness_level closeness; // not_close if we are above min_frontal_gap
-								// too_close if we are below min_frontal_gap threshold
-								// emergency_too_close if we are below emergency_min_frontal_gap threshold
+	closeness_level closeness;	// NOT_CLOSE if we are above min_frontal_gap
+								// TOO_CLOSE if we are below min_frontal_gap threshold
+								// EMERGENCY_TOO_CLOSE if we are below emergency_min_frontal_gap threshold
 };
 
 struct Velocity_manager
@@ -198,7 +199,7 @@ struct Velocity_manager
 	double changing_lane_vel; // Minimum velocity to change to another lane (this way we prevent possible crashes)
 };
 
-enum finite_state_machine 
+enum FSM // Finite State Machine 
 {
 	KL, 	// Keep Lane
 	PLCL, 	// Prepare Lane Change Left
@@ -307,28 +308,10 @@ e_level emptiness_level(int target_lane, int lane_width, int lanes_available, co
 
 
 /**
-	Returns the cost of changing the lane. It just take into account if the lane exist and if it's our destiny's lane.
+    The most important function. Returns the following point where the car is going to be.
+		@return a 2 element vector which contains vectors with the next x vals and y vals.
 
 */
-/*
-void cost_lane_changing(int future_lane, finite_state_machine future_state, map<finite_state_machine, vector<double> > &costs)
-{
-	double cost, delta_d, delta_s;
-	double inf = numeric_limits<double>::max();
-
-	delta_d = future_lane - goal_lane;
-	delta_s = goal_s - this->s;
-
-	if(future_lane < 0 || future_lane > lanes_available)
-		cost = inf;
-	else
-		//cost = 1 - exp(-(fabs(delta_d)/delta_s)); TODO FUTURE
-		cost = 1;
-
-	costs[future_state].push_back(cost);
-}
-*/
-
 vector< vector<double> > path_planner(const vector<double> &previous_path_x, const vector<double> &previous_path_y, \
 					double car_x, double car_y, double car_yaw, \
 					double car_s, double car_d, vector<double> &map_waypoints_s, \
@@ -347,11 +330,11 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 	vector<double> ptsx, ptsy; // List of widely spaced waypoints evenly spaced at 30 m
 
 	Collision_avoidance col_avoidance = {.min_frontal_gap = 45,	.emergency_min_frontal_gap = 25, \
-		.frontal_safe_gap = col_avoidance.min_frontal_gap, .rear_safe_gap = 15, .closeness = not_close};
+		.frontal_safe_gap = col_avoidance.min_frontal_gap, .rear_safe_gap = 15, .closeness = NOT_CLOSE};
 
 	double gap;
 
-	static finite_state_machine curr_state = KL;
+	static FSM curr_state = KL;
 
 	vector< pair<e_level, int> > l_elevel_ls, curr_elevel_ls, r_elevel_ls; // To measure emptiness levels in adjacent lanes
 	pair<e_level, int> l_elevel, curr_elevel, r_elevel; // To reduce emptiness levels in adjacent lanes in a single value
@@ -366,9 +349,13 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 	double lane_center;
 	double vx, vy, frontal_car_vel;
 
-	// TODO DEBUG
-	cout << "desired_lane: " << desired_lane << endl;
-	cout << "curr_state: " << curr_state << endl;
+	int n_points_to_predict = 40; // Used in the final step to interpolate points between anchors
+
+	#ifdef VERBOSE
+		cout << "desired_lane: " << desired_lane << endl;
+		cout << "curr_state: " << curr_state << endl;
+	#endif
+
 
 	if(curr_state == KL)
 	{
@@ -400,7 +387,7 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 			}
 
 
-			// Checking current lane
+			// Checking right lane
 			aux_elevel = emptiness_level(desired_lane + 1, lane_width, lanes_available, sensor_fusion[i], \
 						size_previous_path, car_s, col_avoidance.frontal_safe_gap, col_avoidance.rear_safe_gap);
 
@@ -418,28 +405,27 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 		if (!lane_makes_sense(desired_lane + 1, lanes_available))
 			r_elevel_ls.push_back(make_pair(NOT_SENSE, -1));
 
-		// TODO DEBUG
-		
-		//auto print2 = [sensor_fusion](pair<e_level, int> e){ cout << "(" << e.first << ", " << e.second << ", " << sensor_fusion[e.second][6] << ") ";};
-		auto print2 = [sensor_fusion](pair<e_level, int> e){ cout << "(" << e.first << ", " << e.second << ") ";};	
-		cout << "l_elevel_ls: ";
-		for_each(l_elevel_ls.begin(), l_elevel_ls.end(), print2);
-		cout << endl;
-		cout << "curr_elevel_ls: ";
-		for_each(curr_elevel_ls.begin(), curr_elevel_ls.end(), print2);
-		cout << endl;
-		cout << "r_elevel_ls: ";
-		for_each(r_elevel_ls.begin(), r_elevel_ls.end(), print2);
-		cout << endl;
+
+		#ifdef VERBOSE
+			auto print = [](pair<e_level, int> e){ cout << "(" << e.first << ", " << e.second << ") ";};	
+
+			cout << "l_elevel_ls: ";
+			for_each(l_elevel_ls.begin(), l_elevel_ls.end(), print);
+			cout << endl;
+			cout << "curr_elevel_ls: ";
+			for_each(curr_elevel_ls.begin(), curr_elevel_ls.end(), print);
+			cout << endl;
+			cout << "r_elevel_ls: ";
+			for_each(r_elevel_ls.begin(), r_elevel_ls.end(), print);
+			cout << endl;
+		#endif
 		
 
 
 
 		// Reduce levels to a single value
-
 		auto compare_first = [](pair<e_level, int> i, pair<e_level, int> j) {return i.first < j.first;};
 
-		// TODO For other lanes, I will be interested only in the car with smallest s which is in my safety area
 		if (l_elevel_ls.size())
 			l_elevel = *max_element(l_elevel_ls.begin(), l_elevel_ls.end(), compare_first);
 		else
@@ -470,29 +456,21 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 			|| (curr_elevel.first == ALMOST_EMPTY && (gap < 0)) ) // negative gap means the car is behind
 		{
 			curr_state = KL;
-			col_avoidance.closeness = not_close;
+			col_avoidance.closeness = NOT_CLOSE;
 		}
 		// A problem happens
 		else
 		{
-			//TODO DEBUG
-			cout << "Problem in my lane detected" << endl;
-			auto print = [](pair<e_level, int> e){ cout << "(" << e.first << ", " << e.second << "). ";};
-
-			cout << "l_elevel: ";
-			print(l_elevel);
-			//cout << "d: " << sensor_fusion[l_elevel.second][6];
-			//for_each(l_elevel_ls.begin(), l_elevel_ls.end(), print);
-			cout << endl << "curr_elevel: ";
-			print(curr_elevel);
-			//cout << "d: " << sensor_fusion[curr_elevel.second][6];
-			//for_each(curr_elevel_ls.begin(), curr_elevel_ls.end(), print);
-			cout << endl << "r_elevel: ";
-			print(r_elevel);
-			//cout << "d: " << sensor_fusion[r_elevel.second][6];
-			//for_each(r_elevel_ls.begin(), r_elevel_ls.end(), print);
-			cout << endl;
-			//TODO DEBUG
+			#ifdef VERBOSE
+				cout << "Problem in my lane detected" << endl;
+				cout << "l_elevel: ";
+				print(l_elevel);
+				cout << endl << "curr_elevel: ";
+				print(curr_elevel);
+				cout << endl << "r_elevel: ";
+				print(r_elevel);
+				cout << endl;
+			#endif
 
 
 			// It's there any lane better?
@@ -510,10 +488,10 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 			else
 			{
 				curr_state = KL;
-				col_avoidance.closeness = too_close;
+				col_avoidance.closeness = TOO_CLOSE;
 
 				if(gap < col_avoidance.emergency_min_frontal_gap)
-					col_avoidance.closeness = emergency_too_close;
+					col_avoidance.closeness = EMERGENCY_TOO_CLOSE;
 
 				car_id = curr_elevel.second;
 			}
@@ -544,16 +522,17 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 	}
 	else if(curr_state == LCL || curr_state == LCR)
 	{
-			lane_center = desired_lane*lane_width + (double)lane_width/2.0;
-			
-			// If the car is almost in the center of the lane we have finished the transition
+		// If the car is almost in the center of the lane we have finished the transition
+		lane_center = desired_lane*lane_width + (double)lane_width/2.0;	
 
-			// TODO DEBUG
+		#ifdef VERBOSE
 			cout << "Distance to center: " << abs(car_d - lane_center) << " , max_dist: " << 4*step << endl;
+		#endif
 
-			if(abs(car_d - lane_center) < 4*step)
-				curr_state = KL;
+		if(abs(car_d - lane_center) < 4*step)
+			curr_state = KL;
 	}
+
 
 	/* Execute decision */
 	/********************/
@@ -562,21 +541,23 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 	{
 		case KL:
 
-			// TODO DEBUG
-			cout << "KL state. ";
+			#ifdef VERBOSE
+				cout << "KL state. ";
+			#endif
 
 			switch(col_avoidance.closeness)
 			{
-				case not_close:
+				case NOT_CLOSE:
 
 					curr_vel = fmin(curr_vel + v_man.step_up_vel, v_man.target_vel);
 
-					// TODO DEBUG
-					cout << "We are safe." << " curr_vel: " << curr_vel << endl;
+					#ifdef VERBOSE
+						cout << "We are safe." << " curr_vel: " << curr_vel << endl;
+					#endif
 
 					break;
 
-				case too_close:
+				case TOO_CLOSE:
 
 					//curr_vel = fmax(1, curr_vel - v_man.step_down_vel);
 					vx = sensor_fusion[car_id][CAR_X_VEL_MS];
@@ -585,20 +566,22 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 
 					// Don't need to slow down too much. 80% of previous vehicle's speed is just fine
 					curr_vel = fmax(frontal_car_vel*0.8, curr_vel - v_man.step_down_vel); 
-					col_avoidance.closeness = too_close;
+					col_avoidance.closeness = TOO_CLOSE;
 
-					// TODO DEBUG
-					cout << "Too close. Frontal gap: " << gap << " curr_vel: " << curr_vel << endl;
+					#ifdef VERBOSE
+						cout << "Too close. Frontal gap: " << gap << " curr_vel: " << curr_vel << endl;
+					#endif
 
 					break;
 
-				case emergency_too_close:
+				case EMERGENCY_TOO_CLOSE:
 
 					curr_vel = fmax(1, curr_vel - v_man.emergency_step_down_vel);
-					col_avoidance.closeness = emergency_too_close;
+					col_avoidance.closeness = EMERGENCY_TOO_CLOSE;
 
-					// TODO DEBUG
-					cout << "Emergency. Frontal gap: " << gap << " curr_vel: " << curr_vel << endl;
+					#ifdef VERBOSE
+						cout << "Emergency. Frontal gap: " << gap << " curr_vel: " << curr_vel << endl;
+					#endif
 
 					break;
 
@@ -614,8 +597,9 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 			desired_lane -= step;
 			transition += step;
 
-			//TODO DEBUG
-			cout << "PLCL state" << " curr_vel: " << curr_vel << endl;
+			#ifdef VERBOSE
+				cout << "PLCL state" << " curr_vel: " << curr_vel << endl;
+			#endif
 
 			break;
 
@@ -624,23 +608,25 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 			desired_lane += step;
 			transition += step;
 
-			//TODO DEBUG
-			cout << "PLCR state" << " curr_vel: " << curr_vel << endl;
+			#ifdef VERBOSE
+				cout << "PLCR state" << " curr_vel: " << curr_vel << endl;
+			#endif
 
 			break;
 
-
 		case LCL:
 
-			//TODO DEBUG
-			cout << "LCL state" << " curr_vel: " << curr_vel << endl;
+			#ifdef VERBOSE
+				cout << "LCL state" << " curr_vel: " << curr_vel << endl;
+			#endif
 
 			break;
 
 		case LCR:
 
-			//TODO DEBUG
-			cout << "LCR state"  << " curr_vel: " << curr_vel << endl;
+			#ifdef VERBOSE
+				cout << "LCR state"  << " curr_vel: " << curr_vel << endl;
+			#endif
 
 			break;
 
@@ -651,10 +637,10 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 
 	next_d = desired_lane*lane_width + lane_width/2;
 
-	// TODO DEBUG
-	if (curr_state == PLCL || curr_state == PLCR)
-		cout << "next_d: " << next_d << endl;
-
+	#ifdef VERBOSE
+		if (curr_state == PLCL || curr_state == PLCR)
+			cout << "next_d: " << next_d << endl;
+	#endif
 
 
 
@@ -733,19 +719,6 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 	/****************/
 
 	tk::spline s;
-
-	// TODO DEBUG
-	/*
-	auto print = [](const double& n) {cout << n << ", ";};
-	cout << "ptsx: ";
-	for_each(ptsx.begin(), ptsx.end(), print);
-	cout << endl << "ptsy: ";
-	for_each(ptsy.begin(), ptsy.end(), print);
-	cout << endl;
-	*/
-
-
-
 	s.set_points(ptsx, ptsy);
 
 	/* Prepare fine waypoints from coarse 
@@ -768,7 +741,7 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 	
 	double N, x_point, y_point, x_ref, y_ref;
 
-	for(int i=1; i <= 40 - size_previous_path; i++)
+	for(int i=1; i <= n_points_to_predict - size_previous_path; i++)
 	{
 		N = (target_dist / ( 0.02*mph2mps(curr_vel) )); // Each point is visited every 0.02 seconds
 		x_point = x_add_on + target_x/N;
