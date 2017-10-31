@@ -305,6 +305,57 @@ e_level emptiness_level(int target_lane, int lane_width, int lanes_available, co
 		return NOT_HERE;
 }
 
+/**
+    This function will get the vehicle with higher e_level. If there are many with the highest level, it will order them by
+    absolute gap in increasing order and return the first one which has a positive gap, i.e. the car is in front. If there is
+    no positive, it will return the first in the list
+
+		@return the chosen vehicle by this algorithm.
+
+*/
+pair<e_level, int> max_priority(const vector< pair<e_level, int> > &curr_elevel_ls, \
+		const vector< vector<double> > &sensor_fusion, int size_previous_path, double car_s)
+{
+	vector< pair<double, int> > candidates; // vehicle id
+	e_level max_level = NOT_HERE; // Smallest value
+
+	for(auto it=curr_elevel_ls.begin(); it!=curr_elevel_ls.end(); it++)
+	{
+		if((*it).first > max_level)
+		{
+			max_level = (*it).first;
+			candidates.clear();
+			candidates.push_back( make_pair(0, (*it).second) );
+		}
+		else if ((*it).first == max_level)
+		{
+			candidates.push_back( make_pair(0, (*it).second) );
+		}
+	}
+
+	// Compute gap for every candidate
+	for (auto&& candidate: candidates)
+		candidate.first = compute_gap(sensor_fusion[candidate.second], size_previous_path, car_s);
+
+	// Time to sort by absolute gap
+	auto compare_by_absolute_gap = [](pair<double, int> candidate_i, pair<double, int> candidate_j)
+	{
+		return abs(candidate_i.first) < abs(candidate_j.first);
+	};
+
+	sort(candidates.begin(), candidates.end(), compare_by_absolute_gap);
+
+	// Now just need to find the first positive (in front of us). If there isn't, just return the first in the list (behind)
+	for(auto&& candidate: candidates)
+	{
+		if(candidate.first > 0)
+			return make_pair(max_level, candidate.second);
+	}
+
+	// If don't find a car in front, the first in the list is the closest to us from behind
+	return make_pair(max_level, candidates.front().second);
+}
+
 
 /**
     The most important function. Returns the following point where the car is going to be.
@@ -318,8 +369,8 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 					const vector< vector<double> > &sensor_fusion)
 {
 	static double curr_vel = 0.0; // This is to avoid the cold start problem (to avoid surpass max jerk)
-	Velocity_manager v_man = {.target_vel = 49., .step_up_vel = 0.4, \
-		.step_down_vel = 0.5, .emergency_step_down_vel = 2.0, .changing_lane_vel = v_man.target_vel/2.0};
+	Velocity_manager v_man = {.target_vel = 49., .step_up_vel = 0.3, \
+		.step_down_vel = 0.3, .emergency_step_down_vel = 0.7, .changing_lane_vel = v_man.target_vel/2.0};
 
 	int lanes_available = 3;
 	static double desired_lane = 1;
@@ -420,8 +471,6 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 		#endif
 		
 
-
-
 		// Reduce levels to a single value
 		auto compare_first = [](pair<e_level, int> i, pair<e_level, int> j) {return i.first < j.first;};
 
@@ -431,7 +480,7 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 			l_elevel = make_pair(TOTALLY_EMPTY, -1);
 
 		if (curr_elevel_ls.size())
-			curr_elevel = *max_element(curr_elevel_ls.begin(), curr_elevel_ls.end(), compare_first);
+			curr_elevel = max_priority(curr_elevel_ls, sensor_fusion, size_previous_path, car_s);
 		else
 			curr_elevel = make_pair(TOTALLY_EMPTY, -1);
 
@@ -452,7 +501,7 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 
 		// If there is no problem, just continue in lane
 		if ( (curr_elevel.first == TOTALLY_EMPTY) \
-			|| (curr_elevel.first == ALMOST_EMPTY && (gap < 0)) ) // negative gap means the car is behind
+			|| (curr_elevel.first == NOT_EMPTY && (gap < 0)) ) // negative gap means the car is behind
 		{
 			curr_state = KL;
 			col_avoidance.closeness = NOT_CLOSE;
@@ -525,7 +574,7 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 		lane_center = desired_lane*lane_width + (double)lane_width/2.0;	
 
 		#ifdef VERBOSE
-			cout << "Distance to center: " << abs(car_d - lane_center) << " , max_dist: " << 4*step << endl;
+			cout << "Distance to center: " << abs(car_d - lane_center) << " , max_allowed: " << 4*step << endl;
 		#endif
 
 		if(abs(car_d - lane_center) < 4*step)
@@ -563,13 +612,14 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 					vy = sensor_fusion[car_id][CAR_Y_VEL_MS];
 					frontal_car_vel = sqrt(vx*vx + vy*vy);
 
-					// Don't need to slow down too much. 90% of previous vehicle's speed is just fine
-					curr_vel = fmax(frontal_car_vel*0.9, curr_vel - v_man.step_down_vel); 
+					// Don't need to slow down too much. 95% of previous vehicle's speed is just fine
+					curr_vel = fmax(frontal_car_vel*0.95, curr_vel - v_man.step_down_vel); 
 					col_avoidance.closeness = TOO_CLOSE;
 
 					#ifdef VERBOSE
 						cout << "Too close. Frontal gap: " << gap << endl \
-							<< "frontal_car_vel: " << frontal_car_vel << ", curr_vel: " << curr_vel << endl;
+							<< "frontal_car_vel: " << frontal_car_vel << ", curr_vel: " << curr_vel << endl
+							<< "gap: " << gap << endl;
 					#endif
 
 					break;
@@ -581,7 +631,8 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 
 					#ifdef VERBOSE
 						cout << "Emergency. Frontal gap: " << gap << endl \
-							<< "frontal_car_vel: " << frontal_car_vel << " curr_vel: " << curr_vel << endl;
+							<< "frontal_car_vel: " << frontal_car_vel << " curr_vel: " << curr_vel << endl
+							<< "gap: " << gap << endl;
 					#endif
 
 					break;
