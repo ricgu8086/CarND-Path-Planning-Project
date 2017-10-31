@@ -392,7 +392,7 @@ vector< vector<double> > path_planner(const vector<double> &previous_path_x, con
 
 	int car_id;
 	double s_nearest_car;
-	int full_transition = 18;
+	int full_transition = 20;
 	double step = 1.0/full_transition;
 	static int transition = 0;
 
