@@ -14,14 +14,22 @@ This code was developed, tested and compiled on an Ubuntu 16.04 LTS. It uses `cm
 
 #### 1. The car is able to drive at least 4.32 miles without incident.
 
-![Figure 1](./img/challenge_completed.png)
-Figure 1: The car is able to drive autonomously up to 12.23 miles.
+![Figure 1](./img/new_record.png)
+Figure 1: The car is able to drive autonomously more than 20.80 miles without any incident.
 
-As it is shown in Figure 1, with the provided code in this repo, the car is able to drive at least 12.23 miles without any incident, which is about 3x times longer than the milestone.
+<a href="http://www.youtube.com/watch?feature=player_embedded&v=wxN3t6eehYg
+" target="_blank"><img src="http://img.youtube.com/vi/FitqOkBUXyQ/0.jpg" 
+alt="Youtube video" width="240" height="180" border="10" /></a>
+
+Figure 2: This image links a video in Youtube where the car is able to drive up to 21.29 miles without incidents.
+
+As it is shown in Figure 1 and the video in Figure 2, with the provided code in this repo, the car is able to drive up to 21.29 miles without any incident, which is about 5x times longer than the milestone. 
+
+Note: there is an incident in the video near minute 22.45 when max jerk was exceeded in a lateral movement. After this incident, the car is able to reach 21.29 miles without any more incident. This issue has been corrected in a posterior commit.
 
 #### 2. The car drives according to the speed limit.
 
-The speed limit is 50 mph. My design include 1 mph for security reasons, thus the maximum speed the car is going to reach is 49 mph. When the car detects there is an obstacle in it's lane, it tries to change lane in order to keep the target speed (49 mph) as constant as possible while regarding safety considerations	.
+The speed limit is 50 mph. My design include 1 mph for safety reasons, thus the maximum speed the car is going to reach is 49 mph. When the car detects there is an obstacle in it's lane, it tries to change lane in order to keep the target speed (49 mph) as constant as possible while regarding safety considerations	.
 
 #### 3. Max Acceleration and Jerk are not Exceeded.
 
@@ -29,7 +37,9 @@ To avoid exceeding some constraints, some measures were taken:
 
 First of all, the use of spline library to create smooth trajectories.
 As there was the "cold start" problem, the initial speed was step-by-step increased until reaching the target speed.
-In my implementation there was a issue when changing lanes. To make this step smoother I introduced in the FSM (Finite State Machine) a mechanism to make lane transition step-by-step.
+In my implementation there was a issue when changing lanes, because many times exceeded lateral max jerk. To make this step smoother I introduced in the FSM (Finite State Machine) a mechanism to make lane transition step-by-step.
+
+Updated: in a special and rare condition, when the car was in a close curve and in the most external lane, if it tried to change lane, sometimes it exceeded max jerk just by a tiny fraction of a second. This was fixed making the transition a bit more slower, just enough to cover this special case but avoiding making it too slow for the rest of the occasions.
 
 #### 4. Car does not have collisions.
 
@@ -37,7 +47,7 @@ The car is able to predict in advance if the car in front will be in a dangerous
 
 #### 5. The car stays in its lane, except for the time between changing lanes.
 
-As long as there is no a lane changing maneuver, the car will remain in the same d coordinate (Frenet space). When it reach the time to lane changing, it does the maneuver very smooth while limiting the time used for it to be below a reasonable threshold below the 3 seconds specified in the rubric.
+As long as there is no a lane changing maneuver, the car will remain in the same d coordinate (Frenet space). When it reach the time to lane changing, it does the maneuver very smooth while limiting the time used for it to be below a reasonable threshold under the 3 seconds specified in the rubric.
 
 #### 6. The car is able to change lanes
 
